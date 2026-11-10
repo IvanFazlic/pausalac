@@ -1,13 +1,7 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useId, useState, useTransition } from "react";
 import { Check, Copy, KeyRound, LoaderCircle, UserPlus } from "lucide-react";
-import {
-  createClientUserAction,
-  deleteClientUserAction,
-  resetClientUserPasswordAction,
-  setClientUserDisabledAction,
-} from "@/lib/actions/clients";
 import { ActionButton } from "./action-button";
 import { buttonClass, inputClass, labelClass } from "./classes";
 import { ActionForm, FieldError, SubmitButton } from "./form";
@@ -40,8 +34,8 @@ function Credentials({ credentials, loginUrl, onDismiss }) {
         {credentials.kind === "reset" ? "New temporary password" : "Login created"}
       </p>
       <p className="mt-1 text-[13px] leading-relaxed text-muted">
-        Send these details to the client. The password is shown only now, and they will be asked to choose
-        their own when they first sign in.
+        Send these details to the person who will use the login. The password is shown only now, and they
+        will be asked to choose their own when they first sign in.
       </p>
       <dl className="mt-3 space-y-1.5 text-sm">
         <div className="flex gap-2">
@@ -63,7 +57,7 @@ function Credentials({ credentials, loginUrl, onDismiss }) {
   );
 }
 
-function ResetButton({ clientId, userId, onCredentials }) {
+function ResetButton({ action, onCredentials }) {
   const [pending, startTransition] = useTransition();
   return (
     <button
@@ -72,7 +66,7 @@ function ResetButton({ clientId, userId, onCredentials }) {
       className={buttonClass({ variant: "secondary", size: "sm" })}
       onClick={() =>
         startTransition(async () => {
-          const result = await resetClientUserPasswordAction(clientId, userId);
+          const result = await action();
           if (result?.credentials) onCredentials(result.credentials);
         })
       }
@@ -89,10 +83,13 @@ function statusOf(user) {
   return ["Active", "text-success"];
 }
 
-// Logins the main account provisions for one client. A client login can only
-// ever see that client's invoices.
-export function PortalAccess({ clientId, users, loginUrl }) {
+// Logins the main account provisions: for one client (its own invoices only)
+// or read-only logins that see every invoice. `actions` are server actions
+// already bound to the right scope:
+//   create(formData), reset(userId), setDisabled(userId, disabled), remove(userId)
+export function LoginManager({ users, loginUrl, actions, emptyText, emailPlaceholder = "name@example.com" }) {
   const [credentials, setCredentials] = useState(null);
+  const id = useId();
 
   return (
     <div className="space-y-5 p-5">
@@ -115,11 +112,8 @@ export function PortalAccess({ clientId, users, loginUrl }) {
                   </p>
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
-                  <ResetButton clientId={clientId} userId={user.id} onCredentials={setCredentials} />
-                  <ActionButton
-                    size="sm"
-                    action={setClientUserDisabledAction.bind(null, clientId, user.id, !user.disabled_at)}
-                  >
+                  <ResetButton action={actions.reset.bind(null, user.id)} onCredentials={setCredentials} />
+                  <ActionButton size="sm" action={actions.setDisabled.bind(null, user.id, !user.disabled_at)}>
                     {user.disabled_at ? "Enable" : "Disable"}
                   </ActionButton>
                   <ActionButton
@@ -127,7 +121,7 @@ export function PortalAccess({ clientId, users, loginUrl }) {
                     variant="danger"
                     confirm="Remove this login?"
                     confirmLabel="Remove"
-                    action={deleteClientUserAction.bind(null, clientId, user.id)}
+                    action={actions.remove.bind(null, user.id)}
                   >
                     Remove
                   </ActionButton>
@@ -137,13 +131,11 @@ export function PortalAccess({ clientId, users, loginUrl }) {
           })}
         </ul>
       ) : (
-        <p className="text-sm leading-relaxed text-muted">
-          This client has no login yet. Create one so they can see and download their invoices.
-        </p>
+        <p className="text-sm leading-relaxed text-muted">{emptyText}</p>
       )}
 
       <ActionForm
-        action={createClientUserAction.bind(null, clientId)}
+        action={actions.create}
         resetOnSuccess
         onResult={(result) => {
           if (result?.credentials) setCredentials(result.credentials);
@@ -151,24 +143,24 @@ export function PortalAccess({ clientId, users, loginUrl }) {
         className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] sm:items-start"
       >
         <div>
-          <label htmlFor="portal-email" className={labelClass}>
+          <label htmlFor={`${id}-email`} className={labelClass}>
             Email
           </label>
           <input
-            id="portal-email"
+            id={`${id}-email`}
             name="email"
             type="email"
             autoComplete="off"
-            placeholder="name@client.com"
+            placeholder={emailPlaceholder}
             className={`${inputClass} mt-1.5`}
           />
           <FieldError name="email" />
         </div>
         <div>
-          <label htmlFor="portal-name" className={labelClass}>
+          <label htmlFor={`${id}-name`} className={labelClass}>
             Name (optional)
           </label>
-          <input id="portal-name" name="name" autoComplete="off" className={`${inputClass} mt-1.5`} />
+          <input id={`${id}-name`} name="name" autoComplete="off" className={`${inputClass} mt-1.5`} />
           <FieldError name="name" />
         </div>
         <div className="sm:pt-[1.6rem]">

@@ -2,12 +2,12 @@ import { KeyRound } from "lucide-react";
 import { ActionForm, FormMessage, SubmitButton } from "@/components/form";
 import { Callout, Card, CardHeader, Field, Input, PageHeader } from "@/components/ui";
 import { changePasswordAction } from "@/lib/actions/auth";
-import { requireClient } from "@/lib/auth/session";
+import { requirePortalUser } from "@/lib/auth/session";
 
 export const metadata = { title: "Account" };
 
 export default async function PortalAccountPage() {
-  const user = await requireClient({ allowPasswordChange: true });
+  const user = await requirePortalUser({ allowPasswordChange: true });
   const firstSignIn = user.must_change_password;
 
   return (
@@ -15,7 +15,7 @@ export default async function PortalAccountPage() {
       <PageHeader
         title={firstSignIn ? "Choose your password" : "Account"}
         description={`Signed in as ${user.email}`}
-        back={firstSignIn ? undefined : { href: "/portal", label: "Your invoices" }}
+        back={firstSignIn ? undefined : { href: "/portal", label: user.role === "auditor" ? "All invoices" : "Your invoices" }}
       />
 
       <div className="max-w-xl space-y-6">

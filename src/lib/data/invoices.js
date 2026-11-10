@@ -155,7 +155,7 @@ export async function createInvoice(input) {
 
 // `clientId` restricts the list to one client. The client portal always passes
 // the signed-in user's own client id.
-export async function listInvoices({ status = null, clientId = null, limit = 300 } = {}) {
+export async function listInvoices({ status = null, clientId = null, year = null, limit = 300 } = {}) {
   const today = todayISO();
   const statusFilter = ["issued", "paid", "cancelled"].includes(status) ? status : null;
   const overdueOnly = status === "overdue";
@@ -175,9 +175,16 @@ export async function listInvoices({ status = null, clientId = null, limit = 300
     WHERE (${statusFilter}::text IS NULL OR i.status = ${statusFilter}::text)
       AND (NOT ${overdueOnly}::boolean OR (i.status = 'issued' AND i.due_date < ${today}::date))
       AND (${clientId}::uuid IS NULL OR i.client_id = ${clientId}::uuid)
-    ORDER BY i.issue_date DESC, i.year DESC, i.seq DESC
+      AND (${year}::int IS NULL OR i.year = ${year}::int)
+    ORDER BY i.issue_date DESC, i.number DESC
     LIMIT ${limit}::int
   `;
+}
+
+// Years that have invoices, newest first.
+export async function listInvoiceYears() {
+  const rows = await sql`SELECT DISTINCT year FROM invoices ORDER BY year DESC`;
+  return rows.map((row) => row.year);
 }
 
 // Full invoice with its frozen items and derived totals. When `clientId` is

@@ -25,11 +25,13 @@ before the first deploy, so nobody else can claim the setup page.
 
 ## How it works
 
-**Two kinds of login.** The main account manages everything. It creates logins
+**Three kinds of login.** The main account manages everything. It creates logins
 for clients (Clients → a client → Portal access); a temporary password is shown
 once and the client must choose their own on first sign-in. A client login can
-only list, open and download invoices issued to that client. Every page, server
-action and the PDF endpoint checks this on the server.
+only list, open and download invoices issued to that client. A read-only login
+(Settings → Read-only access), meant for an accountant or the tax office, sees
+every invoice and its PDF but cannot change anything. Every page, server action
+and the PDF endpoint checks this on the server.
 
 **Invoices are frozen when issued.** Issuing stores a snapshot of your company
 details and the client's details on the invoice. Changing company data in

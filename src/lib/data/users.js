@@ -90,25 +90,40 @@ export async function updateOwnerProfile(userId, { name, email }) {
   }
 }
 
-// --- client logins, provisioned by the owner ----------------------------------
+// --- logins provisioned by the owner -------------------------------------------
+//
+// Two kinds, told apart by `scope`:
+//   { role: "client", clientId }  sees the invoices of that one client
+//   { role: "auditor" }           read-only, sees every invoice (accountant, tax office)
+//
+// Every statement below matches on both role and client, so an action meant
+// for one client's logins can never touch another client's or an auditor's.
 
-export async function listClientUsers(clientId) {
+function scopeOf(scope) {
+  if (scope.role === "client" && scope.clientId) return { role: "client", clientId: scope.clientId };
+  if (scope.role === "auditor") return { role: "auditor", clientId: null };
+  throw new Error("Unknown login scope");
+}
+
+async function listLogins(scope) {
+  const { role, clientId } = scopeOf(scope);
   return sql`
     SELECT id, email, name, must_change_password, disabled_at, last_login_at, created_at
     FROM users
-    WHERE client_id = ${clientId} AND role = 'client'
+    WHERE role = ${role} AND client_id IS NOT DISTINCT FROM ${clientId}::uuid
     ORDER BY created_at
   `;
 }
 
 // Returns the temporary password exactly once; only its hash is stored.
-export async function createClientUser(clientId, { email, name }) {
+async function createLogin(scope, { email, name }) {
+  const { role, clientId } = scopeOf(scope);
   const password = generatePassword();
   const hash = await hashPassword(password);
   try {
     const rows = await sql`
       INSERT INTO users (email, name, password_hash, role, client_id, must_change_password)
-      VALUES (${email}, ${name}, ${hash}, 'client', ${clientId}, true)
+      VALUES (${email}, ${name}, ${hash}, ${role}, ${clientId}::uuid, true)
       RETURNING id, email
     `;
     return { ok: true, email: rows[0].email, password };
@@ -118,39 +133,67 @@ export async function createClientUser(clientId, { email, name }) {
   }
 }
 
-export async function resetClientUserPassword(clientId, userId) {
+async function resetLoginPassword(scope, userId) {
+  const { role, clientId } = scopeOf(scope);
   const password = generatePassword();
   const hash = await hashPassword(password);
   const [updated] = await transaction((db) => [
     db`
       UPDATE users SET password_hash = ${hash}, must_change_password = true
-      WHERE id = ${userId} AND client_id = ${clientId} AND role = 'client'
+      WHERE id = ${userId} AND role = ${role} AND client_id IS NOT DISTINCT FROM ${clientId}::uuid
       RETURNING email
     `,
     db`
       DELETE FROM sessions
-      WHERE user_id IN (SELECT id FROM users WHERE id = ${userId} AND client_id = ${clientId} AND role = 'client')
+      WHERE user_id IN (
+        SELECT id FROM users
+        WHERE id = ${userId} AND role = ${role} AND client_id IS NOT DISTINCT FROM ${clientId}::uuid
+      )
     `,
   ]);
   if (!updated[0]) return { ok: false, reason: "not_found" };
   return { ok: true, email: updated[0].email, password };
 }
 
-export async function setClientUserDisabled(clientId, userId, disabled) {
+async function setLoginDisabled(scope, userId, disabled) {
+  const { role, clientId } = scopeOf(scope);
   await transaction((db) => [
     db`
       UPDATE users
       SET disabled_at = CASE WHEN ${disabled}::boolean THEN coalesce(disabled_at, now()) ELSE NULL END
-      WHERE id = ${userId} AND client_id = ${clientId} AND role = 'client'
+      WHERE id = ${userId} AND role = ${role} AND client_id IS NOT DISTINCT FROM ${clientId}::uuid
     `,
     db`
       DELETE FROM sessions
       WHERE ${disabled}::boolean
-        AND user_id IN (SELECT id FROM users WHERE id = ${userId} AND client_id = ${clientId} AND role = 'client')
+        AND user_id IN (
+          SELECT id FROM users
+          WHERE id = ${userId} AND role = ${role} AND client_id IS NOT DISTINCT FROM ${clientId}::uuid
+        )
     `,
   ]);
 }
 
-export async function deleteClientUser(clientId, userId) {
-  await sql`DELETE FROM users WHERE id = ${userId} AND client_id = ${clientId} AND role = 'client'`;
+async function deleteLogin(scope, userId) {
+  const { role, clientId } = scopeOf(scope);
+  await sql`
+    DELETE FROM users
+    WHERE id = ${userId} AND role = ${role} AND client_id IS NOT DISTINCT FROM ${clientId}::uuid
+  `;
 }
+
+// Client logins
+export const listClientUsers = (clientId) => listLogins({ role: "client", clientId });
+export const createClientUser = (clientId, data) => createLogin({ role: "client", clientId }, data);
+export const resetClientUserPassword = (clientId, userId) => resetLoginPassword({ role: "client", clientId }, userId);
+export const setClientUserDisabled = (clientId, userId, disabled) =>
+  setLoginDisabled({ role: "client", clientId }, userId, disabled);
+export const deleteClientUser = (clientId, userId) => deleteLogin({ role: "client", clientId }, userId);
+
+// Read-only logins that see every invoice
+const AUDITOR = { role: "auditor" };
+export const listAuditors = () => listLogins(AUDITOR);
+export const createAuditor = (data) => createLogin(AUDITOR, data);
+export const resetAuditorPassword = (userId) => resetLoginPassword(AUDITOR, userId);
+export const setAuditorDisabled = (userId, disabled) => setLoginDisabled(AUDITOR, userId, disabled);
+export const deleteAuditor = (userId) => deleteLogin(AUDITOR, userId);

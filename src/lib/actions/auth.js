@@ -86,6 +86,6 @@ export async function changePasswordAction(formData) {
   if (!result.ok) return { fieldErrors: { currentPassword: "That is not your current password." } };
 
   await destroyOtherSessions(user.id);
-  if (user.role === "client" && user.must_change_password) redirect("/portal");
+  if (user.role !== "owner" && user.must_change_password) redirect("/portal");
   return { ok: true, message: "Password changed. Other devices have been signed out." };
 }

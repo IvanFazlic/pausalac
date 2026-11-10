@@ -74,12 +74,23 @@ export async function requireOwner() {
   return user;
 }
 
-// A client login. `allowPasswordChange` is only for the page where a client
-// with a temporary password sets their own.
-export async function requireClient({ allowPasswordChange = false } = {}) {
+// Everyone who uses the portal: a client login (its own client's invoices)
+// or a read-only auditor login (every invoice). `allowPasswordChange` is only
+// for the page where someone with a temporary password sets their own.
+export async function requirePortalUser({ allowPasswordChange = false } = {}) {
   const user = await getCurrentUser();
   if (!user) redirect("/login");
-  if (user.role !== "client" || !user.client_id) redirect("/dashboard");
+  if (user.role === "owner") redirect("/dashboard");
   if (user.must_change_password && !allowPasswordChange) redirect("/portal/account");
   return user;
+}
+
+// Which invoices a signed-in user may read, as options for listInvoices() and
+// getInvoice(). A client login is always pinned to its own client; only the
+// main account and auditors get the unrestricted view. Anything else is
+// refused rather than guessed.
+export function invoiceScope(user) {
+  if (user.role === "owner" || user.role === "auditor") return { clientId: null };
+  if (user.role === "client" && user.client_id) return { clientId: user.client_id };
+  throw new Error("This login has no access to invoices");
 }

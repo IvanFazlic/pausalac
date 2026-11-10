@@ -1,16 +1,17 @@
 import { PortalShell } from "@/components/app-shell";
-import { requireClient } from "@/lib/auth/session";
+import { requirePortalUser } from "@/lib/auth/session";
 import { getClient } from "@/lib/data/clients";
 
 export const metadata = { title: "Your invoices" };
 
-// The client portal. A client login sees its own client's invoices and its own
-// account page, nothing else. Pages below re-check access themselves.
+// The portal. A client login sees its own client's invoices; a read-only
+// auditor login sees every invoice. Neither sees anything else. Pages below
+// re-check access themselves.
 export default async function PortalLayout({ children }) {
-  const user = await requireClient({ allowPasswordChange: true });
-  const client = await getClient(user.client_id);
+  const user = await requirePortalUser({ allowPasswordChange: true });
+  const label = user.role === "client" ? (await getClient(user.client_id))?.name ?? "" : "Read-only access";
   return (
-    <PortalShell user={user} clientName={client?.name ?? ""}>
+    <PortalShell user={user} clientName={label}>
       {children}
     </PortalShell>
   );

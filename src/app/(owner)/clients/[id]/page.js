@@ -5,7 +5,7 @@ import { FileText, Plus } from "lucide-react";
 import { ActionButton } from "@/components/action-button";
 import { ClientFields } from "@/components/client-fields";
 import { ActionForm, FormMessage, SubmitButton } from "@/components/form";
-import { PortalAccess } from "@/components/portal-access";
+import { LoginManager } from "@/components/login-manager";
 import {
   Badge,
   Card,
@@ -23,9 +23,13 @@ import {
   rowClass,
 } from "@/components/ui";
 import {
+  createClientUserAction,
   deleteClientAction,
+  deleteClientUserAction,
+  resetClientUserPasswordAction,
   setClientArchivedAction,
   setClientNextNumberAction,
+  setClientUserDisabledAction,
   updateClientAction,
 } from "@/lib/actions/clients";
 import { requireOwner } from "@/lib/auth/session";
@@ -33,7 +37,8 @@ import { getClient } from "@/lib/data/clients";
 import { getSettings } from "@/lib/data/company";
 import { listInvoices } from "@/lib/data/invoices";
 import { listClientUsers } from "@/lib/data/users";
-import { formatDate, formatDateTime, todayISO } from "@/lib/dates";
+import { formatDate, todayISO } from "@/lib/dates";
+import { toLoginRow } from "@/lib/login-rows";
 import { isUuid } from "@/lib/db";
 import { formatInvoiceNumber, usesRunningNumber } from "@/lib/numbering";
 
@@ -68,14 +73,7 @@ export default async function ClientPage({ params }) {
   const nextNumber = ownSeries
     ? formatInvoiceNumber(client.number_format, runningNumber ? client.next_seq : null, today)
     : null;
-  const portalUsers = users.map((user) => ({
-    id: user.id,
-    email: user.email,
-    name: user.name,
-    must_change_password: user.must_change_password,
-    disabled_at: user.disabled_at ? "disabled" : null,
-    last_login_label: user.last_login_at ? formatDateTime(user.last_login_at) : null,
-  }));
+  const portalUsers = users.map(toLoginRow);
 
   return (
     <>
@@ -118,7 +116,18 @@ export default async function ClientPage({ params }) {
               title="Portal access"
               description="A login lets this client see and download their own invoices. They cannot see other clients, your settings or anything else."
             />
-            <PortalAccess clientId={client.id} users={portalUsers} loginUrl={url} />
+            <LoginManager
+              users={portalUsers}
+              loginUrl={url}
+              emailPlaceholder="name@client.com"
+              emptyText="This client has no login yet. Create one so they can see and download their invoices."
+              actions={{
+                create: createClientUserAction.bind(null, client.id),
+                reset: resetClientUserPasswordAction.bind(null, client.id),
+                setDisabled: setClientUserDisabledAction.bind(null, client.id),
+                remove: deleteClientUserAction.bind(null, client.id),
+              }}
+            />
           </Card>
 
           {ownSeries ? (

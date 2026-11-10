@@ -1,6 +1,14 @@
 import { PartyPopper } from "lucide-react";
+import { headers } from "next/headers";
 import { ActionForm, FormMessage, SubmitButton } from "@/components/form";
+import { LoginManager } from "@/components/login-manager";
 import { Callout, Card, CardHeader, Field, Input, PageHeader, Select, Textarea } from "@/components/ui";
+import {
+  createAuditorAction,
+  deleteAuditorAction,
+  resetAuditorPasswordAction,
+  setAuditorDisabledAction,
+} from "@/lib/actions/auditors";
 import { changePasswordAction } from "@/lib/actions/auth";
 import {
   saveCompanyAction,
@@ -10,6 +18,8 @@ import {
 } from "@/lib/actions/settings";
 import { requireOwner } from "@/lib/auth/session";
 import { getCompany, getCompanyVersions, getNumbering, getSettings } from "@/lib/data/company";
+import { listAuditors } from "@/lib/data/users";
+import { toLoginRow } from "@/lib/login-rows";
 import { formatDateTime, todayISO } from "@/lib/dates";
 import { CURRENCIES } from "@/lib/money";
 
@@ -27,12 +37,17 @@ function FormFooter({ label = "Save changes" }) {
 export default async function SettingsPage({ searchParams }) {
   const user = await requireOwner();
   const welcome = (await searchParams).welcome === "1";
-  const [company, versions, settings, numbering] = await Promise.all([
+  const [company, versions, settings, numbering, auditors, requestHeaders] = await Promise.all([
     getCompany(),
     getCompanyVersions(),
     getSettings(),
     getNumbering(todayISO()),
+    listAuditors(),
+    headers(),
   ]);
+  const host = requestHeaders.get("x-forwarded-host") ?? requestHeaders.get("host") ?? "localhost:3000";
+  const protocol = requestHeaders.get("x-forwarded-proto") ?? (host.startsWith("localhost") ? "http" : "https");
+  const loginUrl = `${protocol}://${host}/login`;
   const year = numbering.year;
   const lockedInvoices = versions.reduce((sum, version) => sum + version.invoice_count, 0);
   const currencies = CURRENCIES.includes(settings.default_currency)
@@ -216,6 +231,24 @@ export default async function SettingsPage({ searchParams }) {
             </Field>
             <FormFooter label="Save number" />
           </ActionForm>
+        </Card>
+
+        <Card id="access">
+          <CardHeader
+            title="Read-only access"
+            description="For your accountant or the tax office. A read-only login sees every invoice of every client and can download the PDFs. It cannot change anything and sees no settings, clients list or schedules."
+          />
+          <LoginManager
+            users={auditors.map(toLoginRow)}
+            loginUrl={loginUrl}
+            emptyText="No read-only logins yet."
+            actions={{
+              create: createAuditorAction,
+              reset: resetAuditorPasswordAction,
+              setDisabled: setAuditorDisabledAction,
+              remove: deleteAuditorAction,
+            }}
+          />
         </Card>
 
         <Card id="account">
