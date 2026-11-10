@@ -1,0 +1,37 @@
+import { renderToBuffer } from "@react-pdf/renderer";
+import { getCurrentUser } from "@/lib/auth/session";
+import { getInvoice } from "@/lib/data/invoices";
+import { isUuid } from "@/lib/db";
+import { InvoiceDocument, invoiceFileName } from "@/lib/pdf/invoice-document";
+
+// GET /api/invoices/:id/pdf            -> downloads the invoice
+// GET /api/invoices/:id/pdf?inline=1   -> opens it in the browser
+//
+// The main account can fetch any invoice. A client login can only fetch
+// invoices issued to its own client; anything else is a 404.
+export async function GET(request, { params }) {
+  const { id } = await params;
+  const user = await getCurrentUser();
+  if (!user) return new Response("Sign in to download this invoice.", { status: 401 });
+  if (user.role === "client" && user.must_change_password) {
+    return new Response("Set your password first.", { status: 403 });
+  }
+  if (!isUuid(id)) return new Response("Invoice not found.", { status: 404 });
+
+  const invoice = await getInvoice(id, {
+    clientId: user.role === "owner" ? null : user.client_id,
+  });
+  if (!invoice) return new Response("Invoice not found.", { status: 404 });
+
+  const pdf = await renderToBuffer(<InvoiceDocument invoice={invoice} />);
+  const inline = new URL(request.url).searchParams.get("inline") === "1";
+
+  return new Response(pdf, {
+    headers: {
+      "Content-Type": "application/pdf",
+      "Content-Length": String(pdf.length),
+      "Content-Disposition": `${inline ? "inline" : "attachment"}; filename="${invoiceFileName(invoice)}"`,
+      "Cache-Control": "private, no-store",
+    },
+  });
+}

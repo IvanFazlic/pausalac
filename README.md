@@ -1,36 +1,83 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://github.com/vercel/next.js/tree/canary/packages/create-next-app).
+# Paušalac
 
-## Getting Started
+Invoicing for a paušalac (flat-rate entrepreneur): clients, invoices, recurring
+invoices, PDF download, and a portal where each client sees only their own
+invoices.
 
-First, run the development server:
+Next.js 16 (App Router) · Neon Postgres · Tailwind CSS 4.
+
+## Getting started
 
 ```bash
+vercel env pull .env.local   # DATABASE_URL etc. from the linked Vercel project
+npm install
+npm run db:migrate           # creates the tables (safe to run again)
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open http://localhost:3000. On first run you are asked to create the **main
+account**. After that the setup page is closed for good. Then fill in your
+company details in **Settings** and add a client.
 
-You can start editing the page by modifying `app/page.js`. The page auto-updates as you edit the file.
+Local development and the deployed site use the same Neon database, so the
+account you create locally is the one you sign in with in production. Create it
+before the first deploy, so nobody else can claim the setup page.
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## How it works
 
-## Learn More
+**Two kinds of login.** The main account manages everything. It creates logins
+for clients (Clients → a client → Portal access); a temporary password is shown
+once and the client must choose their own on first sign-in. A client login can
+only list, open and download invoices issued to that client. Every page, server
+action and the PDF endpoint checks this on the server.
 
-To learn more about Next.js, take a look at the following resources:
+**Invoices are frozen when issued.** Issuing stores a snapshot of your company
+details and the client's details on the invoice. Changing company data in
+Settings creates a new version that only future invoices use. The database
+itself rejects any later change to an invoice or its items (triggers in
+`db/migrations/001_init.sql`); only the status can change: unpaid → paid, or
+unpaid → cancelled. Invoices are never deleted, so numbering has no gaps.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+**Numbering.** One running number per year, formatted by the pattern in
+Settings (`{seq}`, `{seq:4}`, `{year}`, `{yy}`). Set "Next running number" to
+continue a sequence you started elsewhere.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+**Currencies.** Each client has a default currency and each invoice line has
+its own. An invoice with lines in several currencies shows a total per currency.
 
-## Deploy on Vercel
+**Recurring invoices.** A schedule issues an invoice every week or month, using
+the company details as they are on that day. Vercel Cron calls
+`/api/cron/recurring` once a day (`vercel.json`); the "Issue due invoices now"
+button does the same on demand. Running it twice never issues an occurrence
+twice.
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+**PDF.** `/api/invoices/:id/pdf` renders the invoice from its stored snapshot,
+in the client's invoice language (Serbian or English).
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## Environment variables
+
+| Name | Used for |
+| --- | --- |
+| `DATABASE_URL` | All queries (pooled Neon connection). Set by the Vercel Neon integration. |
+| `DATABASE_URL_UNPOOLED` | `npm run db:migrate`. Set by the integration. |
+| `CRON_SECRET` | Lets Vercel Cron call `/api/cron/recurring`. Any long random string. Without it scheduled invoices are only issued with the button. |
+
+## Deploying
+
+The Vercel project deploys from `main`. Functions run in `fra1`, next to the
+database. After adding a migration file, run `npm run db:migrate` before
+deploying code that needs it.
+
+## Layout
+
+```
+db/migrations/        SQL schema, applied by scripts/migrate.mjs
+src/app/(owner)/      main-account pages: dashboard, invoices, recurring, clients, settings
+src/app/portal/       client portal
+src/app/api/          PDF download and the cron endpoint
+src/lib/data/         all SQL lives here
+src/lib/actions/      server actions (validate, check access, call lib/data)
+src/lib/auth/         password hashing and sessions
+src/lib/pdf/          the PDF invoice
+src/components/       UI
+```
