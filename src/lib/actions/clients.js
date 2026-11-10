@@ -4,14 +4,27 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { requireOwner } from "@/lib/auth/session";
 import { isUuid } from "@/lib/db";
-import { createClient, deleteClient, setClientArchived, updateClient } from "@/lib/data/clients";
+import { todayISO } from "@/lib/dates";
+import {
+  createClient,
+  deleteClient,
+  setClientArchived,
+  setClientNextNumber,
+  updateClient,
+} from "@/lib/data/clients";
 import {
   createClientUser,
   deleteClientUser,
   resetClientUserPassword,
   setClientUserDisabled,
 } from "@/lib/data/users";
-import { clientSchema, clientUserSchema, formToObject, toFieldErrors } from "@/lib/validation";
+import {
+  clientSchema,
+  clientUserSchema,
+  formToObject,
+  nextNumberSchema,
+  toFieldErrors,
+} from "@/lib/validation";
 
 const CHECK_FIELDS = "Check the highlighted fields.";
 
@@ -35,6 +48,18 @@ export async function updateClientAction(id, formData) {
   revalidatePath("/clients");
   revalidatePath(`/clients/${id}`);
   return { ok: true, message: "Saved. Invoices already issued keep the details they were issued with." };
+}
+
+// Next running number in this client's own series for the current year.
+export async function setClientNextNumberAction(id, formData) {
+  await requireOwner();
+  if (!isUuid(id)) return { error: "Client not found." };
+  const parsed = nextNumberSchema.safeParse(formToObject(formData));
+  if (!parsed.success) return { fieldErrors: toFieldErrors(parsed.error) };
+
+  await setClientNextNumber(id, Number(todayISO().slice(0, 4)), parsed.data.next_number);
+  revalidatePath(`/clients/${id}`);
+  return { ok: true, message: "Saved." };
 }
 
 export async function setClientArchivedAction(id, archived) {

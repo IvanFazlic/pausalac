@@ -116,7 +116,8 @@ export async function runDueSchedules({ today = todayISO() } = {}) {
         r.anchor_date::text AS anchor_date,
         r.next_run_date::text AS next_run_date,
         r.end_date::text AS end_date,
-        r.runs_count, r.payment_terms_days, r.payment_purpose, r.note, r.items
+        r.runs_count, r.payment_terms_days, r.payment_purpose, r.note, r.items,
+        c.invoice_language AS language
       FROM recurring_invoices r
       JOIN clients c ON c.id = r.client_id
       WHERE r.active AND r.next_run_date <= ${today}::date AND c.archived_at IS NULL
@@ -128,6 +129,7 @@ export async function runDueSchedules({ today = todayISO() } = {}) {
   const errors = [];
 
   for (const schedule of due) {
+    const english = schedule.language === "en";
     let runDate = schedule.next_run_date;
     let runs = schedule.runs_count;
 
@@ -142,9 +144,9 @@ export async function runDueSchedules({ today = todayISO() } = {}) {
           serviceDate: today,
           dueDate: addDays(today, schedule.payment_terms_days),
           placeOfIssue: settings.place_of_issue,
-          paymentMethod: settings.payment_method,
+          paymentMethod: english ? settings.payment_method_en : settings.payment_method,
           paymentPurpose: schedule.payment_purpose || settings.payment_purpose,
-          note: schedule.note ?? settings.default_note,
+          note: schedule.note ?? (english ? settings.default_note_en : settings.default_note),
           vatRate: settings.vat_rate,
           items: schedule.items,
           recurring: { id: schedule.id, scheduledFor: runDate, nextRunDate: next },

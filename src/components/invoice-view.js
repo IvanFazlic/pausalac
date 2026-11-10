@@ -6,7 +6,7 @@ import {
   paymentLines,
   singleCurrency,
 } from "@/lib/invoice-labels";
-import { formatAmount, formatQuantity } from "@/lib/money";
+import { formatAmount, formatQuantity, formatUnitPrice } from "@/lib/money";
 
 function Party({ heading, rows }) {
   return (
@@ -82,7 +82,7 @@ export function InvoiceView({ invoice }) {
         </div>
 
         <div className="mt-8 grid gap-8 border-y border-zinc-200 py-6 sm:grid-cols-2">
-          <Party heading={t.issuer} rows={issuerRows(invoice.issuer, t)} />
+          <Party heading={t.issuer} rows={issuerRows(invoice, t)} />
           <Party heading={t.buyer} rows={buyerRows(invoice.client_snapshot, t)} />
         </div>
 
@@ -104,7 +104,7 @@ export function InvoiceView({ invoice }) {
                   {hasUnits ? <td className="px-3 py-2.5 text-zinc-600">{item.unit}</td> : null}
                   <td className="px-3 py-2.5 text-right text-zinc-700">{formatQuantity(item.quantity, lang)}</td>
                   <td className="px-3 py-2.5 text-right whitespace-nowrap text-zinc-700">
-                    {formatAmount(item.unit_price, lang)}
+                    {formatUnitPrice(item.unit_price, lang)}
                     {currency ? null : <span className="text-zinc-500"> {item.currency}</span>}
                   </td>
                   <td className="py-2.5 pl-3 text-right font-medium whitespace-nowrap text-zinc-900">

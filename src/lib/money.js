@@ -16,6 +16,14 @@ export function formatMoney(value, currency, locale = "en") {
   return `${formatAmount(value, locale)} ${currency}`;
 }
 
+// Unit prices keep up to four decimals (hourly rates such as 11.375).
+export function formatUnitPrice(value, locale = "en") {
+  return new Intl.NumberFormat(LOCALES[locale] ?? LOCALES.en, {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 4,
+  }).format(Number(value));
+}
+
 export function formatQuantity(value, locale = "en") {
   return new Intl.NumberFormat(LOCALES[locale] ?? LOCALES.en, {
     maximumFractionDigits: 3,
@@ -40,13 +48,13 @@ function centsToString(cents) {
   return `${whole}.${rest}`;
 }
 
-// quantity (3 decimals) x unit price (2 decimals), rounded half-up to cents.
+// quantity (3 decimals) x unit price (4 decimals), rounded half-up to cents.
 // Matches round(quantity * unit_price, 2) in Postgres for non-negative values.
 export function lineAmountCents(quantity, unitPrice) {
   const q = toScaled(quantity, 3);
-  const p = toScaled(unitPrice, 2);
+  const p = toScaled(unitPrice, 4);
   if (q === null || p === null) return null;
-  return (q * p + 500n) / 1000n;
+  return (q * p + 50000n) / 100000n;
 }
 
 // Totals per currency for a list of items, the same way the database view

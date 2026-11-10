@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
-import { sql, transaction } from "@/lib/db";
+import { sql, transaction, isUniqueViolation } from "@/lib/db";
 import { todayISO } from "@/lib/dates";
+import { usesRunningNumber } from "@/lib/numbering";
 
 // An error whose message is safe and useful to show to the owner.
 export class InvoiceError extends Error {
@@ -11,7 +12,10 @@ export class InvoiceError extends Error {
 }
 
 // Issues an invoice. Everything happens in one transaction:
-//   1. take the next number for the year (row lock makes numbering gap-free),
+//   1. take the next running number of the series for the year (the row lock
+//      makes numbering gap-free). A client with its own number format has its
+//      own series; everyone else shares the general one. A format without
+//      {seq}, such as "{mm}/{year}", needs no running number.
 //   2. insert the invoice with a snapshot of the *current* company data and
 //      the client's details,
 //   3. insert the items.
@@ -23,7 +27,9 @@ export async function createInvoice(input) {
   const check = await sql`
     SELECT
       (SELECT count(*)::int FROM company_profiles) AS companies,
-      (SELECT archived_at IS NULL FROM clients WHERE id = ${input.clientId}) AS client_active
+      (SELECT archived_at IS NULL FROM clients WHERE id = ${input.clientId}) AS client_active,
+      (SELECT number_format FROM clients WHERE id = ${input.clientId}) AS client_format,
+      (SELECT invoice_number_format FROM settings) AS general_format
   `;
   if (check[0].companies === 0) {
     throw new InvoiceError("Add your company details in Settings before issuing invoices.");
@@ -36,6 +42,9 @@ export async function createInvoice(input) {
   const id = randomUUID();
   const year = Number(input.issueDate.slice(0, 4));
   const recurring = input.recurring ?? null;
+  const ownSeries = Boolean(check[0].client_format);
+  const format = check[0].client_format || check[0].general_format;
+  const usesSeq = usesRunningNumber(format);
   const items = JSON.stringify(
     input.items.map((item, index) => ({
       position: index + 1,
@@ -47,69 +56,99 @@ export async function createInvoice(input) {
     }))
   );
 
-  const results = await transaction((db) => {
-    const queries = [];
-    if (recurring) {
+  let results;
+  try {
+    results = await transaction((db) => {
+      const queries = [];
+      if (recurring) {
+        queries.push(db`
+          UPDATE recurring_invoices SET
+            runs_count = runs_count + 1,
+            next_run_date = ${recurring.nextRunDate}::date,
+            active = active AND ${recurring.nextRunDate}::date IS NOT NULL,
+            last_run_at = now(),
+            updated_at = now()
+          WHERE id = ${recurring.id}::uuid AND next_run_date = ${recurring.scheduledFor}::date
+        `);
+      }
+      if (usesSeq && ownSeries) {
+        queries.push(db`
+          INSERT INTO client_invoice_counters (client_id, year, last_number)
+          VALUES (${input.clientId}::uuid, ${year}::int, 1)
+          ON CONFLICT (client_id, year) DO UPDATE SET last_number = client_invoice_counters.last_number + 1
+        `);
+      } else if (usesSeq) {
+        queries.push(db`
+          INSERT INTO invoice_counters (year, last_number)
+          VALUES (${year}::int, 1)
+          ON CONFLICT (year) DO UPDATE SET last_number = invoice_counters.last_number + 1
+        `);
+      }
       queries.push(db`
-        UPDATE recurring_invoices SET
-          runs_count = runs_count + 1,
-          next_run_date = ${recurring.nextRunDate}::date,
-          active = active AND ${recurring.nextRunDate}::date IS NOT NULL,
-          last_run_at = now(),
-          updated_at = now()
-        WHERE id = ${recurring.id}::uuid AND next_run_date = ${recurring.scheduledFor}::date
+        INSERT INTO invoices
+          (id, year, seq, number, client_id, company_profile_id, issuer, client_snapshot, language,
+           issue_date, service_date, due_date, place_of_issue, payment_method, payment_purpose,
+           note, vat_rate, recurring_invoice_id, scheduled_for)
+        SELECT
+          ${id}::uuid,
+          ${year}::int,
+          n.seq,
+          CASE
+            WHEN ${usesSeq}::boolean THEN format_invoice_number(${format}::text, n.seq, ${input.issueDate}::date)
+            ELSE unique_invoice_number(format_invoice_number(${format}::text, NULL, ${input.issueDate}::date))
+          END,
+          c.id,
+          cp.id,
+          to_jsonb(cp) - 'id' - 'version' - 'created_at',
+          jsonb_build_object(
+            'name', c.name, 'address', c.address, 'country', c.country, 'pib', c.pib, 'mb', c.mb,
+            'email', c.email, 'contact_name', c.contact_name
+          ),
+          c.invoice_language,
+          ${input.issueDate}::date,
+          ${input.serviceDate}::date,
+          ${input.dueDate}::date,
+          ${input.placeOfIssue ?? ""}::text,
+          ${input.paymentMethod ?? ""}::text,
+          ${input.paymentPurpose ?? ""}::text,
+          ${input.note ?? ""}::text,
+          ${String(input.vatRate ?? "0")}::numeric,
+          ${recurring?.id ?? null}::uuid,
+          ${recurring?.scheduledFor ?? null}::date
+        FROM (
+               SELECT CASE
+                 WHEN NOT ${usesSeq}::boolean THEN NULL
+                 WHEN ${ownSeries}::boolean THEN (
+                   SELECT last_number FROM client_invoice_counters
+                   WHERE client_id = ${input.clientId}::uuid AND year = ${year}::int
+                 )
+                 ELSE (SELECT last_number FROM invoice_counters WHERE year = ${year}::int)
+               END AS seq
+             ) n,
+             clients c,
+             (SELECT * FROM company_profiles ORDER BY version DESC LIMIT 1) cp
+        WHERE c.id = ${input.clientId}::uuid AND c.archived_at IS NULL
       `);
+      queries.push(db`
+        INSERT INTO invoice_items
+          (invoice_id, position, description, unit, quantity, unit_price, currency, amount)
+        SELECT ${id}::uuid, t.position, t.description, t.unit, t.quantity, t.unit_price, t.currency,
+               round(t.quantity * t.unit_price, 2)
+        FROM jsonb_to_recordset(${items}::jsonb)
+          AS t(position int, description text, unit text, quantity numeric, unit_price numeric, currency text)
+      `);
+      queries.push(db`SELECT id, number FROM invoices WHERE id = ${id}::uuid`);
+      return queries;
+    });
+  } catch (error) {
+    // The whole transaction rolled back, so no number was used up.
+    if (isUniqueViolation(error, "invoices_number_key")) {
+      throw new InvoiceError(
+        "The next number in this series is already used by another invoice. Raise the next running number for this series, then try again."
+      );
     }
-    queries.push(db`
-      INSERT INTO invoice_counters (year, last_number)
-      VALUES (${year}::int, 1)
-      ON CONFLICT (year) DO UPDATE SET last_number = invoice_counters.last_number + 1
-    `);
-    queries.push(db`
-      INSERT INTO invoices
-        (id, year, seq, number, client_id, company_profile_id, issuer, client_snapshot, language,
-         issue_date, service_date, due_date, place_of_issue, payment_method, payment_purpose,
-         note, vat_rate, recurring_invoice_id, scheduled_for)
-      SELECT
-        ${id}::uuid,
-        ${year}::int,
-        n.last_number,
-        format_invoice_number(s.invoice_number_format, n.last_number, ${year}::int),
-        c.id,
-        cp.id,
-        to_jsonb(cp) - 'id' - 'version' - 'created_at',
-        jsonb_build_object(
-          'name', c.name, 'address', c.address, 'pib', c.pib, 'mb', c.mb,
-          'email', c.email, 'contact_name', c.contact_name
-        ),
-        c.invoice_language,
-        ${input.issueDate}::date,
-        ${input.serviceDate}::date,
-        ${input.dueDate}::date,
-        ${input.placeOfIssue ?? ""}::text,
-        ${input.paymentMethod ?? ""}::text,
-        ${input.paymentPurpose ?? ""}::text,
-        ${input.note ?? ""}::text,
-        ${String(input.vatRate ?? "0")}::numeric,
-        ${recurring?.id ?? null}::uuid,
-        ${recurring?.scheduledFor ?? null}::date
-      FROM invoice_counters n,
-           settings s,
-           clients c,
-           (SELECT * FROM company_profiles ORDER BY version DESC LIMIT 1) cp
-      WHERE n.year = ${year}::int AND c.id = ${input.clientId}::uuid AND c.archived_at IS NULL
-    `);
-    queries.push(db`
-      INSERT INTO invoice_items
-        (invoice_id, position, description, unit, quantity, unit_price, currency, amount)
-      SELECT ${id}::uuid, t.position, t.description, t.unit, t.quantity, t.unit_price, t.currency,
-             round(t.quantity * t.unit_price, 2)
-      FROM jsonb_to_recordset(${items}::jsonb)
-        AS t(position int, description text, unit text, quantity numeric, unit_price numeric, currency text)
-    `);
-    queries.push(db`SELECT id, number FROM invoices WHERE id = ${id}::uuid`);
-    return queries;
-  });
+    throw error;
+  }
 
   return results.at(-1)[0];
 }

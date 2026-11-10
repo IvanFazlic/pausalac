@@ -10,8 +10,11 @@ export function ClientFields({ client = null, defaultCurrency = "RSD", defaultTe
       <Field label="Name" name="name" className="sm:col-span-2">
         <Input name="name" defaultValue={client?.name ?? ""} maxLength={200} required autoComplete="off" />
       </Field>
-      <Field label="Address" name="address" className="sm:col-span-2">
+      <Field label="Address" name="address">
         <Input name="address" defaultValue={client?.address ?? ""} maxLength={300} autoComplete="off" />
+      </Field>
+      <Field label="Country" name="country" hint="Printed after the address for clients outside Serbia.">
+        <Input name="country" defaultValue={client?.country ?? ""} maxLength={80} autoComplete="off" />
       </Field>
       <Field label="PIB / Tax ID" name="pib">
         <Input name="pib" defaultValue={client?.pib ?? ""} maxLength={30} autoComplete="off" />
@@ -54,6 +57,21 @@ export function ClientFields({ client = null, defaultCurrency = "RSD", defaultTe
           defaultValue={client?.payment_terms_days ?? ""}
           className="num"
           autoComplete="off"
+        />
+      </Field>
+      <Field
+        label="Invoice number format"
+        name="number_format"
+        className="sm:col-span-2"
+        hint="Leave empty to use the general series from Settings. Fill it in to give this client its own series: {seq} or {seq:4} is the running number, {mm} the month of issue, {year} or {yy} the year. For example 3{seq:4}/{year} gives 30001/2026, and {mm}/{year} gives 04/2026."
+      >
+        <Input
+          name="number_format"
+          defaultValue={client?.number_format ?? ""}
+          maxLength={40}
+          className="font-mono"
+          autoComplete="off"
+          placeholder="general series"
         />
       </Field>
       <Field label="Private notes" name="internal_notes" className="sm:col-span-2" hint="Only you see these. They never appear on invoices or in the client portal.">

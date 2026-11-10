@@ -5,6 +5,7 @@ import Link from "next/link";
 import { LoaderCircle, Lock } from "lucide-react";
 import { createInvoiceAction } from "@/lib/actions/invoices";
 import { addDays, isISODate } from "@/lib/dates";
+import { formatInvoiceNumber, usesRunningNumber } from "@/lib/numbering";
 import { buttonClass, cn, inputClass, textareaClass } from "./classes";
 import { Notice } from "./form";
 import { ItemsEditor, itemsPayload, newItem } from "./items-editor";
@@ -13,10 +14,15 @@ import { useFormResult } from "./use-form-result";
 
 const cardClass = "rounded-xl border border-line bg-surface shadow-card";
 
-export function InvoiceForm({ clients, defaults, today, initialClientId, numberPreview }) {
+export function InvoiceForm({ clients, defaults, today, initialClientId, numbering }) {
   const findClient = (id) => clients.find((client) => client.id === id) ?? null;
   const termsFor = (client) => client?.payment_terms_days ?? defaults.payment_terms_days;
   const currencyFor = (client) => client?.default_currency ?? defaults.default_currency;
+  // English invoices get the English default note and payment method.
+  const noteFor = (client) =>
+    client?.invoice_language === "en" ? defaults.default_note_en : defaults.default_note;
+  const methodFor = (client) =>
+    client?.invoice_language === "en" ? defaults.payment_method_en : defaults.payment_method;
   const initialClient = findClient(initialClientId);
 
   const [clientId, setClientId] = useState(initialClient?.id ?? "");
@@ -26,16 +32,25 @@ export function InvoiceForm({ clients, defaults, today, initialClientId, numberP
   const [dueDate, setDueDate] = useState(addDays(today, termsFor(initialClient)));
   const [dueTouched, setDueTouched] = useState(false);
   const [placeOfIssue, setPlaceOfIssue] = useState(defaults.place_of_issue);
-  const [paymentMethod, setPaymentMethod] = useState(defaults.payment_method);
+  const [paymentMethod, setPaymentMethod] = useState(methodFor(initialClient));
+  const [methodTouched, setMethodTouched] = useState(false);
   const [paymentPurpose, setPaymentPurpose] = useState(defaults.payment_purpose);
   const [vatRate, setVatRate] = useState(String(Number(defaults.vat_rate)));
-  const [note, setNote] = useState(defaults.default_note);
+  const [note, setNote] = useState(noteFor(initialClient));
+  const [noteTouched, setNoteTouched] = useState(false);
   const [items, setItems] = useState(() => [newItem(currencyFor(initialClient))]);
   const { result, setResult, clearErrors, errors } = useFormResult();
   const [pending, startTransition] = useTransition();
 
   const client = findClient(clientId);
   const invalid = (name) => (errors[name] ? true : undefined);
+
+  // Preview only; the database assigns the real number when the invoice is issued.
+  const numberFormat = client?.number_format || numbering.format;
+  const nextSeq = client?.number_format ? client.next_seq : numbering.next_number;
+  const numberPreview = isISODate(issueDate)
+    ? formatInvoiceNumber(numberFormat, usesRunningNumber(numberFormat) ? nextSeq : null, issueDate)
+    : "…";
 
   function onClientChange(id) {
     const next = findClient(id);
@@ -48,6 +63,8 @@ export function InvoiceForm({ clients, defaults, today, initialClientId, numberP
       current.map((item) => (item.currency === previousCurrency ? { ...item, currency: nextCurrency } : item))
     );
     if (!dueTouched && isISODate(issueDate)) setDueDate(addDays(issueDate, termsFor(next)));
+    if (!noteTouched) setNote(noteFor(next));
+    if (!methodTouched) setPaymentMethod(methodFor(next));
   }
 
   function onIssueDateChange(value) {
@@ -183,7 +200,10 @@ export function InvoiceForm({ clients, defaults, today, initialClientId, numberP
                 id="paymentMethod"
                 className={inputClass}
                 value={paymentMethod}
-                onChange={(e) => setPaymentMethod(e.target.value)}
+                onChange={(e) => {
+                  setMethodTouched(true);
+                  setPaymentMethod(e.target.value);
+                }}
                 maxLength={100}
               />
             </Field>
@@ -225,7 +245,10 @@ export function InvoiceForm({ clients, defaults, today, initialClientId, numberP
                 id="note"
                 className={textareaClass}
                 value={note}
-                onChange={(e) => setNote(e.target.value)}
+                onChange={(e) => {
+                  setNoteTouched(true);
+                  setNote(e.target.value);
+                }}
                 rows={4}
                 maxLength={2000}
               />
@@ -238,7 +261,9 @@ export function InvoiceForm({ clients, defaults, today, initialClientId, numberP
         <div>
           <p className="text-xs font-medium text-muted">Invoice number</p>
           <p className="num mt-1 font-mono text-lg font-semibold text-ink">{numberPreview}</p>
-          <p className="mt-1 text-xs leading-relaxed text-muted">Assigned when you issue the invoice.</p>
+          <p className="mt-1 text-xs leading-relaxed text-muted">
+            {client?.number_format ? "From this client’s own series. " : ""}Assigned when you issue the invoice.
+          </p>
         </div>
         <div className="border-t border-line pt-4">
           <p className="text-xs font-medium text-muted">Invoice language</p>

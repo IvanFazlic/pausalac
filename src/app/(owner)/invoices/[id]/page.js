@@ -109,7 +109,7 @@ export default async function InvoicePage({ params }) {
                   {invoice.client_snapshot.name}
                 </Link>
               </Fact>
-              <Fact label="Issued">{formatDateTime(invoice.created_at)}</Fact>
+              <Fact label="Recorded">{formatDateTime(invoice.created_at)}</Fact>
               {invoice.paid_at ? <Fact label="Paid">{formatDateTime(invoice.paid_at)}</Fact> : null}
               {invoice.cancelled_at ? <Fact label="Cancelled">{formatDateTime(invoice.cancelled_at)}</Fact> : null}
               {invoice.scheduled_for ? (

@@ -17,8 +17,8 @@ export default async function NewInvoicePage({ searchParams }) {
   const [company, settings, clients, numbering] = await Promise.all([
     getCompany(),
     getSettings(),
-    listClientOptions(),
-    getNumbering(Number(today.slice(0, 4))),
+    listClientOptions(Number(today.slice(0, 4))),
+    getNumbering(today),
   ]);
 
   return (
@@ -57,7 +57,7 @@ export default async function NewInvoicePage({ searchParams }) {
           defaults={settings}
           today={today}
           initialClientId={isUuid(query.client) ? query.client : ""}
-          numberPreview={numbering.preview}
+          numbering={{ format: numbering.format, next_number: numbering.next_number }}
         />
       )}
     </>

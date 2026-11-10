@@ -35,6 +35,9 @@ export const INVOICE_LABELS = {
     totalDue: "Ukupno za uplatu",
     note: "Napomena",
     payTo: "Uplatu izvršiti na račun",
+    beneficiary: "Korisnik",
+    beneficiaryBank: "Banka korisnika",
+    correspondent: "Korespondentska banka",
     purpose: "Svrha uplate",
     reference: "Poziv na broj",
     cancelled: "STORNIRANO",
@@ -73,6 +76,9 @@ export const INVOICE_LABELS = {
     totalDue: "Total due",
     note: "Note",
     payTo: "Please pay to account",
+    beneficiary: "Beneficiary",
+    beneficiaryBank: "Beneficiary bank",
+    correspondent: "Correspondent bank",
     purpose: "Payment purpose",
     reference: "Payment reference",
     cancelled: "CANCELLED",
@@ -84,9 +90,27 @@ export function labelsFor(language) {
   return INVOICE_LABELS[language] ?? INVOICE_LABELS.sr;
 }
 
+export function invoiceCurrencies(invoice) {
+  return [...new Set(invoice.items.map((item) => item.currency))];
+}
+
+export function singleCurrency(invoice) {
+  const currencies = invoiceCurrencies(invoice);
+  return currencies.length === 1 ? currencies[0] : null;
+}
+
+// An invoice with nothing in dinars is paid from abroad: it shows the IBAN
+// and SWIFT instead of the dinar account.
+function paidFromAbroad(invoice) {
+  const currencies = invoiceCurrencies(invoice);
+  return currencies.length > 0 && !currencies.includes("RSD");
+}
+
 // Rows of "label: value" for the issuer and the buyer, skipping empty values,
 // built from the snapshots stored on the invoice.
-export function issuerRows(issuer, t) {
+export function issuerRows(invoice, t) {
+  const issuer = invoice.issuer;
+  const abroad = paidFromAbroad(invoice);
   return [
     [t.name, issuer.name],
     [t.address, issuer.address],
@@ -96,16 +120,21 @@ export function issuerRows(issuer, t) {
     [t.email, issuer.email],
     [t.website, issuer.website],
     [t.bankName, issuer.bank_name],
-    [t.bankAccount, issuer.bank_account],
-    [t.iban, issuer.iban],
-    [t.swift, issuer.swift],
+    abroad ? [t.iban, issuer.iban] : [t.bankAccount, issuer.bank_account],
+    abroad ? [t.swift, issuer.swift] : [t.iban, issuer.bank_account ? "" : issuer.iban],
   ].filter(([, value]) => value);
 }
 
+const HOME_COUNTRIES = ["", "serbia", "srbija", "republika srbija", "republic of serbia"];
+
 export function buyerRows(buyer, t) {
+  const country = buyer.country ?? "";
+  const address = HOME_COUNTRIES.includes(country.trim().toLowerCase())
+    ? buyer.address
+    : [buyer.address, country].filter(Boolean).join(", ");
   return [
     [t.name, buyer.name],
-    [t.address, buyer.address],
+    [t.address, address],
     [t.pib, buyer.pib],
     [t.mb, buyer.mb],
     [t.contact, buyer.contact_name],
@@ -113,17 +142,49 @@ export function buyerRows(buyer, t) {
   ].filter(([, value]) => value);
 }
 
-// Payment instructions shown under the note, as in the original template.
-export function paymentLines(invoice, t) {
-  const account = invoice.issuer.bank_account || invoice.issuer.iban;
-  return [
-    account ? `${t.payTo}: ${account}` : null,
-    invoice.payment_purpose ? `${t.purpose}: ${invoice.payment_purpose}` : null,
-    `${t.reference}: ${invoice.number}`,
-  ].filter(Boolean);
+// Correspondent banks are stored one per line; a line starting with
+// "EUR: " is only shown on invoices that contain that currency.
+function correspondentBanks(text, currencies) {
+  return String(text ?? "")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .flatMap((line) => {
+      const match = line.match(/^([A-Z]{3})\s*:\s*(.+)$/);
+      if (!match) return [line];
+      if (!currencies.includes(match[1])) return [];
+      return [currencies.length > 1 ? `${match[2]} (${match[1]})` : match[2]];
+    });
 }
 
-export function singleCurrency(invoice) {
-  const currencies = new Set(invoice.items.map((item) => item.currency));
-  return currencies.size === 1 ? [...currencies][0] : null;
+// Payment instructions shown under the note: the dinar account for dinar
+// amounts, international details for foreign-currency amounts.
+export function paymentLines(invoice, t) {
+  const issuer = invoice.issuer;
+  const currencies = invoiceCurrencies(invoice);
+  const foreign = currencies.filter((currency) => currency !== "RSD");
+  const lines = [];
+
+  if (foreign.length === 0 || currencies.includes("RSD")) {
+    const account = issuer.bank_account || issuer.iban;
+    if (account) lines.push(`${t.payTo}: ${account}`);
+  }
+  if (foreign.length > 0 && issuer.iban) {
+    const holder = [issuer.foreign_holder || issuer.name, issuer.foreign_holder_address].filter(Boolean).join(", ");
+    const bank = [issuer.bank_name, issuer.bank_address, issuer.swift ? `SWIFT ${issuer.swift}` : ""]
+      .filter(Boolean)
+      .join(", ");
+    lines.push(`${t.beneficiary}: ${holder}`);
+    lines.push(`IBAN: ${issuer.iban}`);
+    if (bank) lines.push(`${t.beneficiaryBank}: ${bank}`);
+    for (const line of correspondentBanks(issuer.correspondent_banks, foreign)) {
+      lines.push(`${t.correspondent}: ${line}`);
+    }
+    for (const line of String(issuer.payment_note ?? "").split("\n")) {
+      if (line.trim()) lines.push(line.trim());
+    }
+  }
+  if (invoice.payment_purpose) lines.push(`${t.purpose}: ${invoice.payment_purpose}`);
+  lines.push(`${t.reference}: ${invoice.number}`);
+  return lines;
 }

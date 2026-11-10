@@ -1,8 +1,7 @@
-import { renderToBuffer } from "@react-pdf/renderer";
 import { getCurrentUser } from "@/lib/auth/session";
 import { getInvoice } from "@/lib/data/invoices";
 import { isUuid } from "@/lib/db";
-import { InvoiceDocument, invoiceFileName } from "@/lib/pdf/invoice-document";
+import { invoiceFileName, renderInvoicePdf } from "@/lib/pdf/invoice-document";
 
 // GET /api/invoices/:id/pdf            -> downloads the invoice
 // GET /api/invoices/:id/pdf?inline=1   -> opens it in the browser
@@ -23,7 +22,7 @@ export async function GET(request, { params }) {
   });
   if (!invoice) return new Response("Invoice not found.", { status: 404 });
 
-  const pdf = await renderToBuffer(<InvoiceDocument invoice={invoice} />);
+  const pdf = await renderInvoicePdf(invoice);
   const inline = new URL(request.url).searchParams.get("inline") === "1";
 
   return new Response(pdf, {

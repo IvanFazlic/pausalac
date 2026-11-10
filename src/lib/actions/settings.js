@@ -47,11 +47,8 @@ export async function setNextNumberAction(formData) {
   const parsed = nextNumberSchema.safeParse(formToObject(formData));
   if (!parsed.success) return { fieldErrors: toFieldErrors(parsed.error) };
 
-  const year = Number(todayISO().slice(0, 4));
-  if (!(await setNextNumber(year, parsed.data.next_number))) {
-    return {
-      fieldErrors: { next_number: `An invoice with this or a higher number already exists in ${year}.` },
-    };
+  if (!(await setNextNumber(todayISO(), parsed.data.next_number))) {
+    return { fieldErrors: { next_number: "An invoice with this number already exists." } };
   }
   revalidatePath("/settings");
   return { ok: true, message: "Saved." };

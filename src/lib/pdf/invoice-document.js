@@ -1,5 +1,5 @@
 import path from "node:path";
-import { Document, Font, Page, StyleSheet, Text, View } from "@react-pdf/renderer";
+import { Document, Font, Page, StyleSheet, Text, View, renderToBuffer } from "@react-pdf/renderer";
 import { formatDate } from "@/lib/dates";
 import {
   buyerRows,
@@ -8,14 +8,16 @@ import {
   paymentLines,
   singleCurrency,
 } from "@/lib/invoice-labels";
-import { formatAmount, formatQuantity } from "@/lib/money";
+import { formatAmount, formatQuantity, formatUnitPrice } from "@/lib/money";
 
 // Inter is bundled because the built-in PDF fonts lack č, ć, đ, š, ž.
 // next.config.mjs makes sure these files ship with the PDF route on Vercel.
 const fontDir = path.join(process.cwd(), "src", "assets", "fonts");
 
+const FONT_FAMILY = "Inter";
+
 Font.register({
-  family: "Inter",
+  family: FONT_FAMILY,
   fonts: [
     { src: path.join(fontDir, "Inter-Regular.ttf"), fontWeight: 400 },
     { src: path.join(fontDir, "Inter-SemiBold.ttf"), fontWeight: 600 },
@@ -32,13 +34,13 @@ const SOFT = "#f4f4f1";
 
 const s = StyleSheet.create({
   page: {
-    fontFamily: "Inter",
+    fontFamily: FONT_FAMILY,
     fontSize: 9.5,
     color: INK,
-    paddingTop: 44,
-    paddingBottom: 56,
+    paddingTop: 40,
+    paddingBottom: 52,
     paddingHorizontal: 44,
-    lineHeight: 1.4,
+    lineHeight: 1.35,
   },
   header: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start" },
   title: { fontSize: 26, fontWeight: 700, letterSpacing: -0.4, lineHeight: 1.1 },
@@ -51,19 +53,19 @@ const s = StyleSheet.create({
   metaValue: { fontWeight: 600, textAlign: "right", maxWidth: 120 },
   parties: {
     flexDirection: "row",
-    marginTop: 26,
-    paddingVertical: 16,
+    marginTop: 20,
+    paddingVertical: 12,
     borderTopWidth: 1,
     borderBottomWidth: 1,
     borderColor: LINE,
   },
   party: { flex: 1, paddingRight: 16 },
   heading: { fontSize: 7.5, fontWeight: 700, letterSpacing: 0.8, color: MUTED, marginBottom: 6 },
-  partyRow: { flexDirection: "row", marginBottom: 2.5 },
+  partyRow: { flexDirection: "row", marginBottom: 1.5 },
   partyLabel: { width: 72, color: MUTED },
   partyValue: { flex: 1 },
   partyName: { flex: 1, fontWeight: 600 },
-  table: { marginTop: 26 },
+  table: { marginTop: 20 },
   th: {
     flexDirection: "row",
     backgroundColor: SOFT,
@@ -77,7 +79,7 @@ const s = StyleSheet.create({
   },
   tr: {
     flexDirection: "row",
-    paddingVertical: 7,
+    paddingVertical: 5.5,
     paddingHorizontal: 8,
     borderBottomWidth: 0.75,
     borderColor: "#ecece7",
@@ -88,8 +90,8 @@ const s = StyleSheet.create({
   cPrice: { width: 92, textAlign: "right" },
   cAmount: { width: 100, textAlign: "right" },
   amountStrong: { fontWeight: 600 },
-  totals: { marginTop: 14, alignItems: "flex-end" },
-  totalBlock: { width: 250, marginBottom: 10 },
+  totals: { marginTop: 12, alignItems: "flex-end" },
+  totalBlock: { width: 250, marginBottom: 8 },
   totalRow: { flexDirection: "row", justifyContent: "space-between", marginBottom: 4 },
   totalLabel: { color: MUTED },
   grand: {
@@ -102,8 +104,8 @@ const s = StyleSheet.create({
     fontSize: 12,
     fontWeight: 700,
   },
-  notes: { marginTop: 22, paddingTop: 14, borderTopWidth: 1, borderColor: LINE },
-  noteLine: { marginBottom: 2.5 },
+  notes: { marginTop: 14, paddingTop: 12, borderTopWidth: 1, borderColor: LINE },
+  noteLine: { marginBottom: 1.5 },
   footer: {
     position: "absolute",
     left: 44,
@@ -196,7 +198,7 @@ export function InvoiceDocument({ invoice }) {
         </View>
 
         <View style={s.parties}>
-          <Party heading={t.issuer} rows={issuerRows(invoice.issuer, t)} />
+          <Party heading={t.issuer} rows={issuerRows(invoice, t)} />
           <Party heading={t.buyer} rows={buyerRows(invoice.client_snapshot, t)} />
         </View>
 
@@ -213,7 +215,7 @@ export function InvoiceDocument({ invoice }) {
               <Text style={s.cDescription}>{item.description}</Text>
               {hasUnits ? <Text style={s.cUnit}>{item.unit}</Text> : null}
               <Text style={s.cQuantity}>{formatQuantity(item.quantity, lang)}</Text>
-              <Text style={s.cPrice}>{withCurrency(formatAmount(item.unit_price, lang), item.currency)}</Text>
+              <Text style={s.cPrice}>{withCurrency(formatUnitPrice(item.unit_price, lang), item.currency)}</Text>
               <Text style={[s.cAmount, s.amountStrong]}>
                 {withCurrency(formatAmount(item.amount, lang), item.currency)}
               </Text>
@@ -266,6 +268,33 @@ export function InvoiceDocument({ invoice }) {
       </Page>
     </Document>
   );
+}
+
+// The renderer keeps each loaded font in memory and reuses it for every
+// document. With @react-pdf/renderer 4.9.0 that reuse corrupts later
+// documents in the same process: lines break in the middle of a word and the
+// text cannot be copied or searched. Reloading the fonts from disk for each
+// document avoids it, and renders run one at a time so two requests never
+// share a half-used font. The version is pinned in package.json because this
+// reaches into the font store; re-check it (render several different invoices
+// in a row, then copy text from the last PDF) before upgrading.
+function reloadFonts() {
+  const family = Font.getRegisteredFonts()[FONT_FAMILY];
+  for (const source of family?.sources ?? []) {
+    source.data = null;
+    source.loadResultPromise = null;
+  }
+}
+
+let renderQueue = Promise.resolve();
+
+export function renderInvoicePdf(invoice) {
+  const result = renderQueue.then(() => {
+    reloadFonts();
+    return renderToBuffer(<InvoiceDocument invoice={invoice} />);
+  });
+  renderQueue = result.catch(() => {});
+  return result;
 }
 
 export function invoiceFileName(invoice) {

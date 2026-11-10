@@ -11,6 +11,8 @@ import {
   Card,
   CardHeader,
   EmptyState,
+  Field,
+  Input,
   InvoiceStatusBadge,
   LinkButton,
   MoneyList,
@@ -23,6 +25,7 @@ import {
 import {
   deleteClientAction,
   setClientArchivedAction,
+  setClientNextNumberAction,
   updateClientAction,
 } from "@/lib/actions/clients";
 import { requireOwner } from "@/lib/auth/session";
@@ -30,8 +33,9 @@ import { getClient } from "@/lib/data/clients";
 import { getSettings } from "@/lib/data/company";
 import { listInvoices } from "@/lib/data/invoices";
 import { listClientUsers } from "@/lib/data/users";
-import { formatDate, formatDateTime } from "@/lib/dates";
+import { formatDate, formatDateTime, todayISO } from "@/lib/dates";
 import { isUuid } from "@/lib/db";
+import { formatInvoiceNumber, usesRunningNumber } from "@/lib/numbering";
 
 export const metadata = { title: "Client" };
 
@@ -47,8 +51,10 @@ export default async function ClientPage({ params }) {
   const { id } = await params;
   if (!isUuid(id)) notFound();
 
+  const today = todayISO();
+  const year = Number(today.slice(0, 4));
   const [client, settings, users, invoices, url] = await Promise.all([
-    getClient(id),
+    getClient(id, year),
     getSettings(),
     listClientUsers(id),
     listInvoices({ clientId: id }),
@@ -57,6 +63,11 @@ export default async function ClientPage({ params }) {
   if (!client) notFound();
 
   const archived = Boolean(client.archived_at);
+  const ownSeries = Boolean(client.number_format);
+  const runningNumber = usesRunningNumber(client.number_format);
+  const nextNumber = ownSeries
+    ? formatInvoiceNumber(client.number_format, runningNumber ? client.next_seq : null, today)
+    : null;
   const portalUsers = users.map((user) => ({
     id: user.id,
     email: user.email,
@@ -109,6 +120,30 @@ export default async function ClientPage({ params }) {
             />
             <PortalAccess clientId={client.id} users={portalUsers} loginUrl={url} />
           </Card>
+
+          {ownSeries ? (
+            <Card>
+              <CardHeader
+                title="Numbering"
+                description={
+                  runningNumber
+                    ? `This client has its own series. The next invoice issued today would be ${nextNumber}.`
+                    : `This client's numbers come from the issue date. An invoice issued today would be ${nextNumber}; a second one in the same month gets “-2”.`
+                }
+              />
+              {runningNumber ? (
+                <ActionForm action={setClientNextNumberAction.bind(null, client.id)} className="space-y-4 p-5">
+                  <Field label={`Next running number in ${year}`} name="next_number" className="max-w-xs">
+                    <Input name="next_number" inputMode="numeric" defaultValue={client.next_seq} className="num" />
+                  </Field>
+                  <div className="flex flex-wrap items-center gap-3">
+                    <SubmitButton variant="secondary">Save number</SubmitButton>
+                    <FormMessage />
+                  </div>
+                </ActionForm>
+              ) : null}
+            </Card>
+          ) : null}
 
           <Card>
             <CardHeader

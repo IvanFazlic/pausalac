@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { isISODate } from "./dates";
+import { numberFormatProblem } from "./numbering";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -96,6 +97,11 @@ export const companySchema = z.object({
   bank_account: text(60),
   iban: text(60),
   swift: text(20),
+  bank_address: text(200),
+  foreign_holder: text(200),
+  foreign_holder_address: text(300),
+  correspondent_banks: multiline(1000),
+  payment_note: multiline(500),
 });
 
 export const settingsSchema = z.object({
@@ -103,13 +109,16 @@ export const settingsSchema = z.object({
   payment_terms_days: days,
   invoice_number_format: text(40)
     .min(1, "This field is required")
-    .regex(/^[A-Za-z0-9\-_/.{}: ]+$/, "Use letters, digits, - _ / . and the {seq} {year} placeholders")
-    .refine((v) => /\{seq(:\d{1,2})?\}/.test(v), "Include {seq} so every invoice gets its own number")
-    .refine((v) => /\{year\}|\{yy\}/.test(v), "Include {year} or {yy}, because numbering restarts each year"),
+    .superRefine((v, ctx) => {
+      const problem = numberFormatProblem(v, { requireSeq: true });
+      if (problem) ctx.addIssue({ code: "custom", message: problem });
+    }),
   place_of_issue: text(100),
   payment_method: text(100),
   payment_purpose: text(200),
   default_note: multiline(2000),
+  default_note_en: multiline(2000),
+  payment_method_en: text(100),
   vat_rate: vatRate,
 });
 
@@ -129,9 +138,15 @@ export const clientSchema = z.object({
   email: optionalEmail,
   contact_name: text(120),
   phone: text(50),
+  country: text(80),
   default_currency: currency,
   invoice_language: z.enum(["sr", "en"]),
   payment_terms_days: optionalDays,
+  // Empty = use the general format from Settings.
+  number_format: text(40).superRefine((v, ctx) => {
+    const problem = v === "" ? null : numberFormatProblem(v);
+    if (problem) ctx.addIssue({ code: "custom", message: problem });
+  }),
   internal_notes: multiline(2000),
 });
 
@@ -144,7 +159,7 @@ export const itemSchema = z.object({
   description: requiredText(500),
   unit: text(20).default(""),
   quantity: decimal(9, 3).refine((v) => Number(v) > 0, "Must be greater than 0"),
-  unit_price: decimal(11, 2),
+  unit_price: decimal(11, 4),
   currency,
 });
 

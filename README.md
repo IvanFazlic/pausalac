@@ -38,12 +38,20 @@ itself rejects any later change to an invoice or its items (triggers in
 `db/migrations/001_init.sql`); only the status can change: unpaid → paid, or
 unpaid → cancelled. Invoices are never deleted, so numbering has no gaps.
 
-**Numbering.** One running number per year, formatted by the pattern in
-Settings (`{seq}`, `{seq:4}`, `{year}`, `{yy}`). Set "Next running number" to
-continue a sequence you started elsewhere.
+**Numbering.** A client can have its own number series (the "Invoice number
+format" on the client), for example `3{seq:4}/{year}` for 30001/2026 or
+`{mm}/{year}` for month-based numbers like 04/2026. Clients without one share
+the general series from Settings. Placeholders: `{seq}`, `{seq:4}`, `{mm}`,
+`{year}`, `{yy}`. Running numbers restart each year; set the next running
+number to continue a sequence you started elsewhere.
 
 **Currencies.** Each client has a default currency and each invoice line has
 its own. An invoice with lines in several currencies shows a total per currency.
+Unit prices keep up to four decimals (hourly rates such as 11.375).
+
+**Payments from abroad.** Invoices in a foreign currency print the beneficiary,
+IBAN, SWIFT and correspondent bank from Settings instead of the dinar account.
+English invoices use their own default note and payment method wording.
 
 **Recurring invoices.** A schedule issues an invoice every week or month, using
 the company details as they are on that day. Vercel Cron calls
@@ -52,7 +60,9 @@ button does the same on demand. Running it twice never issues an occurrence
 twice.
 
 **PDF.** `/api/invoices/:id/pdf` renders the invoice from its stored snapshot,
-in the client's invoice language (Serbian or English).
+in the client's invoice language (Serbian or English). `@react-pdf/renderer`
+is pinned to an exact version; see the note above `renderInvoicePdf` in
+`src/lib/pdf/invoice-document.js` before upgrading it.
 
 ## Environment variables
 

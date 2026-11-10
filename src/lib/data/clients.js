@@ -22,21 +22,26 @@ export async function listClients({ includeArchived = false } = {}) {
   `;
 }
 
-// Minimal list for pickers in the invoice and schedule forms.
-export async function listClientOptions() {
+// Minimal list for pickers in the invoice and schedule forms. `next_seq` is
+// the next running number in the client's own series for `year` (only
+// meaningful when the client has its own number format).
+export async function listClientOptions(year) {
   return sql`
-    SELECT id, name, default_currency, invoice_language, payment_terms_days
-    FROM clients
-    WHERE archived_at IS NULL
-    ORDER BY lower(name)
+    SELECT
+      c.id, c.name, c.default_currency, c.invoice_language, c.payment_terms_days, c.number_format,
+      coalesce((SELECT k.last_number FROM client_invoice_counters k WHERE k.client_id = c.id AND k.year = ${year ?? 0}::int), 0) + 1 AS next_seq
+    FROM clients c
+    WHERE c.archived_at IS NULL
+    ORDER BY lower(c.name)
   `;
 }
 
-export async function getClient(id) {
+export async function getClient(id, year = 0) {
   const rows = await sql`
-    SELECT id, name, address, pib, mb, email, contact_name, phone, default_currency,
-           invoice_language, payment_terms_days, internal_notes, archived_at, created_at,
-           (SELECT count(*)::int FROM invoices i WHERE i.client_id = clients.id) AS invoice_count
+    SELECT id, name, address, country, pib, mb, email, contact_name, phone, default_currency,
+           invoice_language, payment_terms_days, number_format, internal_notes, archived_at, created_at,
+           (SELECT count(*)::int FROM invoices i WHERE i.client_id = clients.id) AS invoice_count,
+           coalesce((SELECT k.last_number FROM client_invoice_counters k WHERE k.client_id = clients.id AND k.year = ${year}::int), 0) + 1 AS next_seq
     FROM clients
     WHERE id = ${id}
   `;
@@ -46,12 +51,12 @@ export async function getClient(id) {
 export async function createClient(data) {
   const rows = await sql`
     INSERT INTO clients
-      (name, address, pib, mb, email, contact_name, phone, default_currency,
-       invoice_language, payment_terms_days, internal_notes)
+      (name, address, country, pib, mb, email, contact_name, phone, default_currency,
+       invoice_language, payment_terms_days, number_format, internal_notes)
     VALUES
-      (${data.name}, ${data.address}, ${data.pib}, ${data.mb}, ${data.email}, ${data.contact_name},
-       ${data.phone}, ${data.default_currency}, ${data.invoice_language},
-       ${data.payment_terms_days}, ${data.internal_notes})
+      (${data.name}, ${data.address}, ${data.country ?? ""}, ${data.pib}, ${data.mb}, ${data.email},
+       ${data.contact_name}, ${data.phone}, ${data.default_currency}, ${data.invoice_language},
+       ${data.payment_terms_days}, ${data.number_format || null}, ${data.internal_notes})
     RETURNING id
   `;
   return rows[0].id;
@@ -64,6 +69,7 @@ export async function updateClient(id, data) {
     UPDATE clients SET
       name = ${data.name},
       address = ${data.address},
+      country = ${data.country ?? ""},
       pib = ${data.pib},
       mb = ${data.mb},
       email = ${data.email},
@@ -72,12 +78,22 @@ export async function updateClient(id, data) {
       default_currency = ${data.default_currency},
       invoice_language = ${data.invoice_language},
       payment_terms_days = ${data.payment_terms_days},
+      number_format = ${data.number_format || null},
       internal_notes = ${data.internal_notes},
       updated_at = now()
     WHERE id = ${id}
     RETURNING id
   `;
   return rows.length > 0;
+}
+
+// Next running number in a client's own series for one year.
+export async function setClientNextNumber(clientId, year, nextNumber) {
+  await sql`
+    INSERT INTO client_invoice_counters (client_id, year, last_number)
+    VALUES (${clientId}::uuid, ${year}::int, ${nextNumber}::int - 1)
+    ON CONFLICT (client_id, year) DO UPDATE SET last_number = EXCLUDED.last_number
+  `;
 }
 
 export async function setClientArchived(id, archived) {
