@@ -39,3 +39,8 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# working files with real data dropped into the repo folder (never commit)
+/invoice-intake*.json
+/*.xlsx
+/*.pdf

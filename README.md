@@ -93,3 +93,7 @@ src/lib/auth/         password hashing and sessions
 src/lib/pdf/          the PDF invoice
 src/components/       UI
 ```
+
+## License
+
+MIT. See [LICENSE](LICENSE).
